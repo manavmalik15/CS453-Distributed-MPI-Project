@@ -1,0 +1,3 @@
+/Users/manavmalik/Desktop/git/CS453-Distributed-MPI-Project/build/CMakeFiles/ngs_mpi.dir
+/Users/manavmalik/Desktop/git/CS453-Distributed-MPI-Project/build/CMakeFiles/edit_cache.dir
+/Users/manavmalik/Desktop/git/CS453-Distributed-MPI-Project/build/CMakeFiles/rebuild_cache.dir

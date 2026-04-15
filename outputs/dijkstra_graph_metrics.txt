@@ -1,0 +1,8 @@
+Algorithm: dijkstra
+Graph file: /Users/manavmalik/Desktop/git/CS453-Distributed-MPI-Project/outputs/graph.txt
+Partition file: /Users/manavmalik/Desktop/git/CS453-Distributed-MPI-Project/outputs/part.txt
+Source: 0
+Iterations: 4
+Runtime (seconds): 0.003357
+Message count (approx): 24
+Bytes sent (approx): 96

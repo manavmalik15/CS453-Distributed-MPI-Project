@@ -1,0 +1,7 @@
+Algorithm: leader
+Graph file: /Users/manavmalik/Desktop/git/CS453-Distributed-MPI-Project/outputs/graph2.txt
+Partition file: /Users/manavmalik/Desktop/git/CS453-Distributed-MPI-Project/outputs/part2.txt
+Iterations: 5
+Runtime (seconds): 0.000126
+Message count (approx): 12
+Bytes sent (approx): 24

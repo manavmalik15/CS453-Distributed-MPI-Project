@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <string>
 #include <fstream>
-#include <sstream>
 
 struct Edge {
     int to;
@@ -15,6 +14,17 @@ struct Edge {
 
 const int INF = 1000000000;
 
+struct MetricsSummary {
+    std::string algorithm;
+    std::string graph_file;
+    std::string part_file;
+    int source = -1;
+    int iterations = 0;
+    double runtime = 0.0;
+    long long message_count = 0;
+    long long bytes_sent = 0;
+};
+
 std::string get_arg_value(int argc, char** argv, const std::string& key) {
     for (int i = 1; i < argc - 1; ++i) {
         if (std::string(argv[i]) == key) {
@@ -22,6 +32,39 @@ std::string get_arg_value(int argc, char** argv, const std::string& key) {
         }
     }
     return "";
+}
+
+std::string get_file_stem(const std::string& path) {
+    std::size_t slash_pos = path.find_last_of("/\\");
+    std::string filename = (slash_pos == std::string::npos) ? path : path.substr(slash_pos + 1);
+
+    std::size_t dot_pos = filename.find_last_of('.');
+    if (dot_pos == std::string::npos) {
+        return filename;
+    }
+
+    return filename.substr(0, dot_pos);
+}
+
+bool write_metrics_file(const MetricsSummary& metrics) {
+    std::string output_path = "outputs/" + metrics.algorithm + "_" + get_file_stem(metrics.graph_file) + "_metrics.txt";
+    std::ofstream fout(output_path);
+    if (!fout.is_open()) {
+        return false;
+    }
+
+    fout << "Algorithm: " << metrics.algorithm << "\n";
+    fout << "Graph file: " << metrics.graph_file << "\n";
+    fout << "Partition file: " << metrics.part_file << "\n";
+    if (metrics.source >= 0) {
+        fout << "Source: " << metrics.source << "\n";
+    }
+    fout << "Iterations: " << metrics.iterations << "\n";
+    fout << "Runtime (seconds): " << metrics.runtime << "\n";
+    fout << "Message count (approx): " << metrics.message_count << "\n";
+    fout << "Bytes sent (approx): " << metrics.bytes_sent << "\n";
+
+    return true;
 }
 
 void print_usage(int world_rank) {
@@ -80,11 +123,7 @@ bool load_partition(const std::string& filename,
         owner_map[node] = owner;
     }
 
-    if ((int)owner_map.size() != total_nodes) {
-        return false;
-    }
-
-    return true;
+    return (int)owner_map.size() == total_nodes;
 }
 
 int main(int argc, char** argv) {
@@ -177,6 +216,13 @@ int main(int argc, char** argv) {
     std::set<int> unique_ghosts(ghost_nodes.begin(), ghost_nodes.end());
     ghost_nodes.assign(unique_ghosts.begin(), unique_ghosts.end());
 
+    long long message_count = 0;
+    long long bytes_sent = 0;
+    int iterations = 0;
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    double start_time = MPI_Wtime();
+
     if (algo == "leader") {
         std::map<int, int> leader_candidate;
         for (int node : owned_nodes) {
@@ -186,6 +232,8 @@ int main(int argc, char** argv) {
         int max_rounds = total_nodes;
 
         for (int round = 0; round < max_rounds; ++round) {
+            iterations++;
+
             std::map<int, int> next_candidate = leader_candidate;
 
             for (int node : owned_nodes) {
@@ -204,6 +252,9 @@ int main(int argc, char** argv) {
 
             std::vector<int> gathered(world_size, -1);
             MPI_Allgather(&local_max, 1, MPI_INT, gathered.data(), 1, MPI_INT, MPI_COMM_WORLD);
+
+            message_count += world_size;
+            bytes_sent += sizeof(int);
 
             int global_seen_max = -1;
             for (int value : gathered) {
@@ -240,6 +291,11 @@ int main(int argc, char** argv) {
 
         int global_ok = 0;
         MPI_Allreduce(&local_ok, &global_ok, 1, MPI_INT, MPI_LAND, MPI_COMM_WORLD);
+        message_count += world_size;
+        bytes_sent += sizeof(int);
+
+        double end_time = MPI_Wtime();
+        double runtime = end_time - start_time;
 
         if (world_rank == 0) {
             if (global_ok) {
@@ -247,6 +303,18 @@ int main(int argc, char** argv) {
                           << expected_leader << "\n";
             } else {
                 std::cout << "Leader election failed: not all nodes agree.\n";
+            }
+
+            std::cout << "\nMetrics:\n";
+            std::cout << "  Algorithm: leader\n";
+            std::cout << "  Iterations: " << iterations << "\n";
+            std::cout << "  Runtime (seconds): " << runtime << "\n";
+            std::cout << "  Message count (approx): " << message_count << "\n";
+            std::cout << "  Bytes sent (approx): " << bytes_sent << "\n";
+
+            MetricsSummary metrics = {"leader", graph_file, part_file, -1, iterations, runtime, message_count, bytes_sent};
+            if (!write_metrics_file(metrics)) {
+                std::cout << "Failed to write metrics file for leader run.\n";
             }
         }
     }
@@ -257,8 +325,6 @@ int main(int argc, char** argv) {
         if (owner_map[source] == world_rank) {
             dist[source] = 0;
         }
-
-        int iterations = 0;
 
         for (int step = 0; step < total_nodes; ++step) {
             int local_best_dist = INF;
@@ -278,6 +344,9 @@ int main(int argc, char** argv) {
                           all_best_dist.data(), 1, MPI_INT, MPI_COMM_WORLD);
             MPI_Allgather(&local_best_node, 1, MPI_INT,
                           all_best_node.data(), 1, MPI_INT, MPI_COMM_WORLD);
+
+            message_count += 2LL * world_size;
+            bytes_sent += 2LL * sizeof(int);
 
             int global_best_dist = INF;
             int global_best_node = -1;
@@ -310,6 +379,9 @@ int main(int argc, char** argv) {
             std::vector<int> global_proposed(total_nodes, INF);
             MPI_Allreduce(proposed.data(), global_proposed.data(), total_nodes, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
 
+            message_count += world_size;
+            bytes_sent += 1LL * total_nodes * sizeof(int);
+
             for (int node = 0; node < total_nodes; ++node) {
                 if (global_proposed[node] < dist[node]) {
                     dist[node] = global_proposed[node];
@@ -334,8 +406,23 @@ int main(int argc, char** argv) {
             MPI_Barrier(MPI_COMM_WORLD);
         }
 
+        double end_time = MPI_Wtime();
+        double runtime = end_time - start_time;
+
         if (world_rank == 0) {
             std::cout << "Dijkstra finished in " << iterations << " iterations\n";
+            std::cout << "\nMetrics:\n";
+            std::cout << "  Algorithm: dijkstra\n";
+            std::cout << "  Source: " << source << "\n";
+            std::cout << "  Iterations: " << iterations << "\n";
+            std::cout << "  Runtime (seconds): " << runtime << "\n";
+            std::cout << "  Message count (approx): " << message_count << "\n";
+            std::cout << "  Bytes sent (approx): " << bytes_sent << "\n";
+
+            MetricsSummary metrics = {"dijkstra", graph_file, part_file, source, iterations, runtime, message_count, bytes_sent};
+            if (!write_metrics_file(metrics)) {
+                std::cout << "Failed to write metrics file for Dijkstra run.\n";
+            }
         }
     }
     else {
